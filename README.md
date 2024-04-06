@@ -1,52 +1,52 @@
 Реализованы 1 и 3 версии API. Каждая из реализаций для версий находится в своей ветке.
 По умолчанию базовой веткой остается v1, т.к. в собственных проектах мне необходима аутентификация пользователей, которая не реализована в v3 самого мегаплана, для сторонних приложений.
 
-# megaplan
-
-Смотри примеры в examples
-
 ## v1
 
 https://dev.megaplan.ru/r1905/api/index.html
 
-В данный момент поддерживает v1 API.
-
 Представляет простую обертку над http методами GET и POST
 Алгоритм шифрования запроса см. в методе __queryHashing__, может быть реализован на любом ЯП.
 
-    go get github.com/stvoidit/megaplan
+
+Установка:
+```
+go get github.com/stvoidit/megaplan
+```
 
 Пример использования:
-
-    var api = megaplan.NewAPI(accessID, secretKey, myhost)
-    response, err := api.GET("/BumsCommonApiV01/UserInfo/id.api", nil)
-	if err != nil {
-		panic(err)
-	}
-	defer response.Body.Close()
-	fmt.Println(response.Status)
-    type UserInfo struct {
-		UserID       int64  `json:"UserId"`
-		EmployeeID   int64  `json:"EmployeeId"`
-		ContractorID string `json:"ContractorId"`
-	}
-	var user = new(UserInfo)
-	if err := json.NewDecoder(tee).Decode(megaplan.ExpectedResponse(user)); err != nil {
-		panic(err)
-	}
-	fmt.Printf("%+v\n", user)
-
+```golang
+var api = megaplan.NewAPI(accessID, secretKey, myhost)
+response, err := api.GET("/BumsCommonApiV01/UserInfo/id.api", nil)
+if err != nil {
+	panic(err)
+}
+defer response.Body.Close()
+fmt.Println(response.Status)
+type UserInfo struct {
+	UserID       int64  `json:"UserId"`
+	EmployeeID   int64  `json:"EmployeeId"`
+	ContractorID string `json:"ContractorId"`
+}
+var user = new(UserInfo)
+if err := json.NewDecoder(response.Body).Decode(megaplan.ExpectedResponse(user)); err != nil {
+	panic(err)
+}
+fmt.Printf("%+v\n", user)
+```
 
 ## v3
 
 https://dev.megaplan.ru/r1905/apiv3/index.html
 
-Уже может использоваться, но не имеет кастомизации возможности сохранения токена.
-Частично в процессе доработки удобства использования.
+Реализация для APIv3 находится в отдельной ветке [https://github.com/stvoidit/megaplan/tree/v3](https://github.com/stvoidit/megaplan/tree/v3).
 
-Представляет собой обертку над [oauth2](https://godoc.org/golang.org/x/oauth2).
+Описание и примеры там же.
 
-    go get github.com/stvoidit/megaplan/v3
+Установка:
+```
+go get github.com/stvoidit/megaplan/v3
+```
 
 ## Примечание
 
