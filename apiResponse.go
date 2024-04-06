@@ -6,25 +6,26 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 )
 
 // Response - ответ API
-type Response struct {
-	Meta Meta        `json:"meta"` // metainfo ответа
-	Data interface{} `json:"data"` // поле для декодирования присвоенной структуры
+type Response[T any] struct {
+	Meta Meta `json:"meta"` // metainfo ответа
+	Data T    `json:"data"` // поле для декодирования присвоенной структуры
 }
 
 // Next - есть ли следующая страница
-func (res Response) Next() bool { return res.Meta.Pagination.HasMoreNext }
+func (res Response[T]) Next() bool { return res.Meta.Pagination.HasMoreNext }
 
 // Prev - есть ли предыдущая страница
-func (res Response) Prev() bool { return res.Meta.Pagination.HasMorePrev }
+func (res Response[T]) Prev() bool { return res.Meta.Pagination.HasMorePrev }
 
 // Decode - парсинг ответа API
-func (res *Response) Decode(r io.Reader, i interface{}) (err error) {
-	res.Data = i
-	if err := json.NewDecoder(r).Decode(res); err != nil {
+func (res *Response[T]) Decode(r *http.Response) (err error) {
+	defer r.Body.Close()
+	if err := json.NewDecoder(r.Body).Decode(res); err != nil {
 		return err
 	}
 	return res.Meta.Error()
@@ -85,10 +86,10 @@ func (p Pagination) MarshalJSON() ([]byte, error) { return nil, nil }
 // Meta - metainfo
 type Meta struct {
 	Errors []struct {
-		Fields  interface{} `json:"field"`
-		Message interface{} `json:"message"`
+		Fields  any `json:"field"`
+		Message any `json:"message"`
 	} `json:"errors"`
-	Status     int64      `json:"status"`
+	Status     int        `json:"status"`
 	Pagination Pagination `json:"pagination"`
 }
 
@@ -104,12 +105,18 @@ func (m Meta) Error() (err error) {
 	return
 }
 
-// ParseResponse - обертка над методов Response.Decode + данные о пагинации
-// utility-функция для упрощения чтения ответа API
-func ParseResponse(r io.Reader, i interface{}) (next bool, prev bool, err error) {
-	var res Response
-	if err := res.Decode(r, i); err != nil {
-		return res.Next(), res.Prev(), err
+// ParseResponse - utility-функция для упрощения чтения ответа API
+func ParseResponse[T any](r *http.Response) (res Response[T], err error) {
+	defer r.Body.Close()
+	if !strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			return res, err
+		}
+		return res, errors.New(string(b))
 	}
-	return res.Next(), res.Prev(), nil
+	e := json.NewDecoder(r.Body)
+	e.UseNumber()
+	err = e.Decode(&res)
+	return
 }

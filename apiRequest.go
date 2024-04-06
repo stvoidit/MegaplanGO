@@ -25,7 +25,7 @@ type QueryBuildingFunc func(QueryParams)
 
 // CreateEnity - создать базовую сущность в формате "Мегаплана"
 // ! могут быть не описаны крайние или редкоиспользуемые типы
-func CreateEnity(contentType string, value interface{}) (qp QueryParams) {
+func CreateEnity(contentType string, value any) (qp QueryParams) {
 	qp = make(QueryParams, 2)
 	qp["contentType"] = contentType
 
@@ -62,7 +62,7 @@ func CreateEnity(contentType string, value interface{}) (qp QueryParams) {
 }
 
 // SetEntityField - добавить поле с сущностью
-func SetEntityField(fieldName string, contentType string, value interface{}) (qbf QueryBuildingFunc) {
+func SetEntityField(fieldName string, contentType string, value any) (qbf QueryBuildingFunc) {
 	return func(qp QueryParams) { qp[fieldName] = CreateEnity(contentType, value) }
 }
 
@@ -72,7 +72,7 @@ func SetEntityArray(field string, ents ...QueryBuildingFunc) QueryBuildingFunc {
 		if len(ents) == 0 {
 			return
 		}
-		var arr = make([]interface{}, len(ents))
+		var arr = make([]any, len(ents))
 		var tmpParams = make(QueryParams)
 		for i, ent := range ents {
 			ent(tmpParams)
@@ -83,19 +83,19 @@ func SetEntityArray(field string, ents ...QueryBuildingFunc) QueryBuildingFunc {
 }
 
 // SetRawField - добавить поле с простым типом значения (string, int, etc.)
-func SetRawField(field string, value interface{}) QueryBuildingFunc {
+func SetRawField(field string, value any) QueryBuildingFunc {
 	return func(qp QueryParams) { qp[field] = value }
 }
 
 // UploadFile - загрузка файла, возвращает обычный http.Response, в ответе стандартная структура ответа + данные для базовой сущности
-func (c *ClientV3) UploadFile(filename string, fileRader io.Reader) (*http.Response, error) {
+func (c *ClientV3) UploadFile(filename string, fileReader io.Reader) (*http.Response, error) {
 	var buf bytes.Buffer // default 1024 bytes buffer
 	var mw = multipart.NewWriter(&buf)
 	fw, err := mw.CreateFormFile("files[]", filename)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.Copy(fw, fileRader); err != nil {
+	if _, err := io.Copy(fw, fileReader); err != nil {
 		return nil, err
 	}
 	if err := mw.Close(); err != nil {

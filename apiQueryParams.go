@@ -8,9 +8,9 @@ import (
 )
 
 // QueryParams - параметры запроса
-type QueryParams map[string]interface{}
+type QueryParams map[string]any
 
-// QueryEscape - urlencode для запроса
+// QueryEscape - urlencode для запроса в строке параметрво
 func (qp QueryParams) QueryEscape() string {
 	b, _ := qp.ToJSON()
 	return url.QueryEscape(string(b))
@@ -19,7 +19,7 @@ func (qp QueryParams) QueryEscape() string {
 // ToJSON - маршализация параметров в JSON
 func (qp QueryParams) ToJSON() ([]byte, error) { return json.Marshal(&qp) }
 
-// ToReader - преобразование с JSON и io.Reader для удобства записи в http.Request
+// ToReader - получить io.Reader для добавление в body часть http.Request
 func (qp QueryParams) ToReader() (io.Reader, error) {
 	b, err := qp.ToJSON()
 	if err != nil {
@@ -31,6 +31,6 @@ func (qp QueryParams) ToReader() (io.Reader, error) {
 // PrettyPrintJSON - SetIndent для читабельного вывода
 func (qp QueryParams) PrettyPrintJSON(w io.Writer) error {
 	enc := json.NewEncoder(w)
-	enc.SetIndent("", "\t")
+	enc.SetIndent("", "  ")
 	return enc.Encode(qp)
 }

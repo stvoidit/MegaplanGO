@@ -43,9 +43,9 @@ func NewClient(domain, token string, opts ...ClientOption) (c *ClientV3) {
 
 // ClientV3 - клиент
 type ClientV3 struct {
-	client         *http.Client
 	domain         string
 	defaultHeaders http.Header
+	client         *http.Client
 }
 
 // Do - http.Do + установка обязательных заголовков + декомпрессия ответа, если ответ сжат
@@ -54,7 +54,7 @@ func (c *ClientV3) Do(req *http.Request) (*http.Response, error) {
 	for h := range c.defaultHeaders {
 		req.Header.Set(h, c.defaultHeaders.Get(h))
 	}
-	if req.Header.Get(ct) == "" {
+	if _, ok := req.Header[ct]; !ok {
 		req.Header.Set(ct, "application/json")
 	}
 	res, err := c.client.Do(req)

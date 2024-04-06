@@ -1,7 +1,8 @@
 # Пример использования
 
-Иниализация клиента + опция включения заголовка "Accept-Encoding":"gzip", ответ будет возвращаться сжатым:
+Иниализация клиента + опция включения заголовка "Accept-Encoding":"gzip", ответ будет возвращаться сжатым, реализована декомпрессия тела ответа внутри вызова.
 
+```golang
     import (
         "github.com/stvoidit/megaplan/v3"
     )
@@ -12,42 +13,44 @@
     func main() {
         client := megaplan.NewClient(domain, token, megaplan.OptionEnableAcceptEncodingGzip(true))
     }
-
+```
 ## Пример создания задачами
 https://demo.megaplan.ru/api/v3/docs#entityTask
-Для удобства составления json для тела запроса есть функция __megaplan.BuildQueryParams__. Её единственное название - собрать параметры в правильном формате.
+Для удобства составления json для тела запроса есть функция __megaplan.BuildQueryParams__. Её единственное назначение - собрать параметры в правильном формате.
 Некоторые сущности требуют специального формата (например [Дата и Время](https://demo.megaplan.ru/api/v3/docs#entityDateTime), [Интервал](https://demo.megaplan.ru/api/v3/docs#entityDateInterval), [Дата](https://demo.megaplan.ru/api/v3/docs#entityDateOnly), [~~Сдвиг дат~~](https://demo.megaplan.ru/api/v3/docs#entityShiftDate)), то функция __megaplan.BuildQueryParams__ корректно сформирует структуру этих сущностей.
 
-    func CreateTask(c *megaplan.ClientV3) {
-        const endpoint = "/api/v3/task"
-        var qp = megaplan.BuildQueryParams(
-            megaplan.SetRawField("contentType", "Task"),
-            megaplan.SetRawField("isUrgent", false),
-            megaplan.SetRawField("isTemplate", false),
-            megaplan.SetRawField("name", "library test"),
-            megaplan.SetRawField("subject", "subject library test"),
-            megaplan.SetRawField("statement", "statement library test"),
-            megaplan.SetEntityField("owner", "Employee", 1000129),
-            megaplan.SetEntityField("responsible", "Employee", 1000129),
-            megaplan.SetEntityField("deadline", "DateOnly", time.Now().Add(time.Hour*72)),
-            megaplan.SetEntityField("plannedWork", "DateInterval", time.Hour*13),
-        )
-        r, err := qp.ToReader()
-        if err != nil {
-            panic(err)
-        }
-        rc, err := c.DoRequestAPI(http.MethodPost, endpoint, nil, r)
-        if err != nil {
-            panic(err)
-        }
-        defer rc.Close()
-        os.Stdout.ReadFrom(rc)
-    }
 
+```golang
+func CreateTask(c *megaplan.ClientV3) {
+    const endpoint = "/api/v3/task"
+    var qp = megaplan.BuildQueryParams(
+        megaplan.SetRawField("contentType", "Task"),
+        megaplan.SetRawField("isUrgent", false),
+        megaplan.SetRawField("isTemplate", false),
+        megaplan.SetRawField("name", "library test"),
+        megaplan.SetRawField("subject", "subject library test"),
+        megaplan.SetRawField("statement", "statement library test"),
+        megaplan.SetEntityField("owner", "Employee", 1000129),
+        megaplan.SetEntityField("responsible", "Employee", 1000129),
+        megaplan.SetEntityField("deadline", "DateOnly", time.Now().Add(time.Hour*72)),
+        megaplan.SetEntityField("plannedWork", "DateInterval", time.Hour*13),
+    )
+    r, err := qp.ToReader()
+    if err != nil {
+        panic(err)
+    }
+    rc, err := c.DoRequestAPI(http.MethodPost, endpoint, nil, r)
+    if err != nil {
+        panic(err)
+    }
+    defer rc.Close()
+    os.Stdout.ReadFrom(rc)
+}
+```
 ## Пример запроса с параметрами URL
 Так как параметры запроса на api "Мегаплан" передаются в нетипичном формате ("*?json=?"), то необходимо их экранировать через url.QueryEscape.
 Для удобства составления этих параметров можно так же использовать тип __megaplan.QueryParams__.
-
+```golang
     func testGetWithFilters(c *megaplan.ClientV3) {
         const endpoint = "/api/v3/task"
         var requestedFiled = [...]string{
@@ -141,8 +144,77 @@ https://demo.megaplan.ru/api/v3/docs#entityTask
             os.Stdout.ReadFrom(response.Body)
         }
     }
+```
+
+## Чтение ответа
+С появлением дженериков улучшена функция для чтения ответов от api.
+Внутри функции есть проверка на Content-Type, если это не json, то в 99% это html с ошибкой. В этом случае функция вернет ошибку с текстом в виде html строки.
+
+
+```golang
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+
+	"github.com/stvoidit/megaplan/v3"
+)
+
+const (
+	DOMAIN      = `https://example.ru`
+	TOKEN       = `TOKEN`
+	ACCOUNTINFO = `/api/v3/accountInfo`
+)
+
+type AccountInfo struct {
+	ID                string         `json:"id"`
+	ContentType       string         `json:"contentType"`
+	PermanentHost     string         `json:"permanentHost"`
+	AccountName       string         `json:"accountName"`
+	BuildVersion      string         `json:"buildVersion"`
+	SystemProductName string         `json:"systemProductName"`
+	TarifId           string         `json:"tarifId"`
+	LicenceEndDate    map[string]any `json:"licenceEndDate"`
+	MobileEndDate     map[string]any `json:"mobileEndDate"`
+	PaidToDate        map[string]any `json:"paidToDate"`
+	LicenseExpired    bool           `json:"licenseExpired"`
+	MegamailDomain    string         `json:"megamailDomain"`
+	DaysRemaining     int            `json:"daysRemaining"`
+	TimeCreated       string         `json:"timeCreated"`
+}
+
+func (ai AccountInfo) String() string {
+	var sb strings.Builder
+	e := json.NewEncoder(&sb)
+	e.SetIndent("", "  ")
+	e.Encode(&ai)
+	return sb.String()
+}
+
+func main() {
+	c := megaplan.NewClient(DOMAIN, TOKEN,
+		megaplan.OptionEnableAcceptEncodingGzip(true),
+		megaplan.OptionInsecureSkipVerify(true))
+	res, err := c.DoRequestAPI(http.MethodGet, ACCOUNTINFO, nil, nil)
+	if err != nil {
+		panic(err)
+	}
+    // Вы можете указать типа как "any", если вам нужно стандартное поведение json.Decode - возврат в виде map[string]any
+	body, err := megaplan.ParseResponse[AccountInfo](res)
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(body)
+}
+```
+
 
 ## __!__ Про типы и сущности "мегаплана" __!__
+
+\* _не актуально с появлением дженериков_
 
 Многие реализации библиотек для API "Мегаплана" пытаются строго типизировать и описать полностью сущности, которыми оперирует "Мегаплан".
 Однако это подход влечет за собой обязанность этих библиотек поддерживать согласованность с версиями "Мегаплана", а так же каким-то образом поддерживать кастомные варианты полей.
