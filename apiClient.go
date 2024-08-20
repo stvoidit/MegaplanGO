@@ -1,29 +1,28 @@
 package megaplan
 
 import (
-	"bytes"
-	"compress/gzip"
-	"context"
 	"crypto/tls"
-	"errors"
-	"io"
 	"net/http"
+	"net/http/cookiejar"
+	"net/url"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // DefaultClient - клиент по умаолчанию для API.
 var (
-	cpus          = runtime.NumCPU()
+	cpus             = runtime.NumCPU()
+	DefaultTransport = &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConns:        cpus,
+		MaxConnsPerHost:     cpus,
+		MaxIdleConnsPerHost: cpus,
+	}
 	DefaultClient = &http.Client{
-		Transport: &http.Transport{
-			Proxy:               http.ProxyFromEnvironment,
-			MaxIdleConns:        cpus,
-			MaxConnsPerHost:     cpus,
-			MaxIdleConnsPerHost: cpus,
-		},
-		Timeout: time.Minute,
+		Transport: DefaultTransport,
+		Timeout:   time.Minute,
 	}
 	// DefaultHeaders - заголовок по умолчанию - версия go. Используется при инициализации клиента в NewClient.
 	DefaultHeaders = http.Header{"User-Agent": {runtime.Version()}}
@@ -31,6 +30,10 @@ var (
 
 // NewClient - обертка над http.Client для удобной работы с API v3
 func NewClient(domain, token string, opts ...ClientOption) (c *ClientV3) {
+	if strings.HasPrefix("http", domain) {
+		_URL, _ := url.Parse(domain)
+		domain = _URL.Host
+	}
 	c = &ClientV3{
 		client:         DefaultClient,
 		domain:         domain,
@@ -48,91 +51,7 @@ type ClientV3 struct {
 	client         *http.Client
 }
 
-// Do - http.Do + установка обязательных заголовков + декомпрессия ответа, если ответ сжат
-func (c *ClientV3) Do(req *http.Request) (*http.Response, error) {
-	const ct = "Content-Type"
-	for h := range c.defaultHeaders {
-		req.Header.Set(h, c.defaultHeaders.Get(h))
-	}
-	if _, ok := req.Header[ct]; !ok {
-		req.Header.Set(ct, "application/json")
-	}
-	res, err := c.client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	if err := unzipResponse(res); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
-// DoRequestAPI - т.к. в v3 параметры запроса для GET (json маршализируется и будет иметь вид: "*?{params}=")
-func (c ClientV3) DoRequestAPI(method string, endpoint string, search QueryParams, body io.Reader) (*http.Response, error) {
-	var args string // параметры строки запроса
-	if search != nil {
-		args = search.QueryEscape()
-	}
-	request, err := http.NewRequest(method, c.domain, body)
-	if err != nil {
-		return nil, err
-	}
-	request.URL.Path = endpoint
-	request.URL.RawQuery = args
-	return c.Do(request)
-}
-
-// DoRequestAPI - т.к. в v3 параметры запроса для GET (json маршализируется и будет иметь вид: "*?{params}=")
-func (c ClientV3) DoCtxRequestAPI(ctx context.Context, method string, endpoint string, search QueryParams, body io.Reader) (*http.Response, error) {
-	var args string // параметры строки запроса
-	if search != nil {
-		args = search.QueryEscape()
-	}
-	request, err := http.NewRequestWithContext(ctx, method, c.domain, body)
-	if err != nil {
-		return nil, err
-	}
-	request.URL.Path = endpoint
-	request.URL.RawQuery = args
-	return c.Do(request)
-}
-
-// ErrUnknownCompressionMethod - неизвестное значение в заголовке "Content-Encoding"
-// не является фатальной ошибкой, должна возвращаться вместе с http.Response.Body,
-// чтобы пользователь мог реализовать свой метод обработки сжатого сообщения
-var ErrUnknownCompressionMethod = errors.New("unknown compression method")
-
-// unzipResponse - распаковка сжатого ответа
-func unzipResponse(response *http.Response) (err error) {
-	if response.Uncompressed {
-		return nil
-	}
-	switch response.Header.Get("Content-Encoding") {
-	case "":
-		return nil
-	case "gzip":
-		gz, err := gzip.NewReader(response.Body)
-		if err != nil {
-			return err
-		}
-		b, err := io.ReadAll(gz)
-		if err != nil {
-			return err
-		}
-		if err := response.Body.Close(); err != nil {
-			return err
-		}
-		if err := gz.Close(); err != nil {
-			return err
-		}
-		response.Body = io.NopCloser(bytes.NewReader(b))
-		response.Header.Del("Content-Encoding")
-		response.Uncompressed = true
-		return nil
-	default:
-		return ErrUnknownCompressionMethod
-	}
-}
+func (c *ClientV3) Close() { c.client.CloseIdleConnections() }
 
 // SetOptions - применить опции
 func (c *ClientV3) SetOptions(opts ...ClientOption) {
@@ -149,13 +68,13 @@ type ClientOption func(*ClientV3)
 
 // OptionInsecureSkipVerify - переключение флага bool в http.Client.Transport.TLSClientConfig.InsecureSkipVerify - отключать или нет проверку сертификтов
 // Если домен использует самоподписанные сертифика, то удобно включать на время отладки и разработки
-func OptionInsecureSkipVerify(b bool) ClientOption {
+func OptionInsecureSkipVerify(yes bool) ClientOption {
 	return func(c *ClientV3) {
 		if c.client.Transport != nil {
 			if (c.client.Transport.(*http.Transport)).TLSClientConfig == nil {
-				(c.client.Transport.(*http.Transport)).TLSClientConfig = &tls.Config{InsecureSkipVerify: b}
+				(c.client.Transport.(*http.Transport)).TLSClientConfig = &tls.Config{InsecureSkipVerify: yes}
 			} else {
-				(c.client.Transport.(*http.Transport)).TLSClientConfig.InsecureSkipVerify = b
+				(c.client.Transport.(*http.Transport)).TLSClientConfig.InsecureSkipVerify = yes
 			}
 		}
 	}
@@ -168,10 +87,10 @@ func OptionsSetHTTPTransport(tr http.RoundTripper) ClientOption {
 
 // OptionEnableAcceptEncodingGzip - доабвить заголов Accept-Encoding=gzip к запросу
 // т.е. объекм трафика на хуках может быть большим, то удобно запрашивать сжатый ответ
-func OptionEnableAcceptEncodingGzip(b bool) ClientOption {
+func OptionEnableAcceptEncodingGzip(yes bool) ClientOption {
 	const header = "Accept-Encoding"
 	return func(c *ClientV3) {
-		if b {
+		if yes {
 			c.defaultHeaders.Set(header, "gzip")
 		} else {
 			c.defaultHeaders.Del(header)
@@ -197,6 +116,37 @@ func OptionSetXUserID(userID int) ClientOption {
 			c.defaultHeaders.Set(header, strconv.Itoa(userID))
 		} else {
 			c.defaultHeaders.Del(header)
+		}
+	}
+}
+
+func OptionDisableCookie(yes bool) ClientOption {
+	return func(c *ClientV3) {
+		if yes {
+			c.client.Jar = nil
+		} else {
+			jar, _ := cookiejar.New(nil)
+			c.client.Jar = jar
+		}
+	}
+}
+
+func OptionForceAttemptHTTP2(yes bool) ClientOption {
+	return func(c *ClientV3) {
+		if c.client.Transport != nil {
+			(c.client.Transport.(*http.Transport)).ForceAttemptHTTP2 = yes
+		} else {
+			c.client.Transport = &http.Transport{ForceAttemptHTTP2: yes}
+		}
+	}
+}
+
+func OptionDisablekeepAlive(yes bool) ClientOption {
+	return func(c *ClientV3) {
+		if c.client.Transport != nil {
+			(c.client.Transport.(*http.Transport)).DisableKeepAlives = yes
+		} else {
+			c.client.Transport = &http.Transport{DisableKeepAlives: yes}
 		}
 	}
 }

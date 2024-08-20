@@ -2,6 +2,7 @@ package megaplan
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,13 @@ func (res Response[T]) Prev() bool { return res.Meta.Pagination.HasMorePrev }
 // Decode - парсинг ответа API
 func (res *Response[T]) Decode(r *http.Response) (err error) {
 	defer r.Body.Close()
+	if !strings.Contains(r.Header.Get(headerContentType), valueApplicationJSON) {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			return err
+		}
+		return errors.New(string(b))
+	}
 	if err := json.NewDecoder(r.Body).Decode(res); err != nil {
 		return err
 	}
@@ -108,7 +116,7 @@ func (m Meta) Error() (err error) {
 // ParseResponse - utility-функция для упрощения чтения ответа API
 func ParseResponse[T any](r *http.Response) (res Response[T], err error) {
 	defer r.Body.Close()
-	if !strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+	if !strings.Contains(r.Header.Get(headerContentType), valueApplicationJSON) {
 		b, err := io.ReadAll(r.Body)
 		if err != nil {
 			return res, err
@@ -119,4 +127,36 @@ func ParseResponse[T any](r *http.Response) (res Response[T], err error) {
 	e.UseNumber()
 	err = e.Decode(&res)
 	return
+}
+
+// ErrUnknownCompressionMethod - неизвестное значение в заголовке "Content-Encoding"
+// не является фатальной ошибкой, должна возвращаться вместе с http.Response.Body,
+// чтобы пользователь мог реализовать свой метод обработки сжатого сообщения
+var ErrUnknownCompressionMethod = errors.New("unknown compression method")
+
+// unzipResponse - распаковка сжатого ответа
+func unzipResponse(response *http.Response) (err error) {
+	if response.Uncompressed {
+		return nil
+	}
+	switch response.Header.Get("Content-Encoding") {
+	case "":
+		return nil
+	case "gzip":
+		defer response.Body.Close()
+		b, err := io.ReadAll(response.Body)
+		if err != nil {
+			return err
+		}
+		gz, err := gzip.NewReader(bytes.NewReader(b))
+		if err != nil {
+			return err
+		}
+		response.Body = gz
+		response.Header.Del("Content-Encoding")
+		response.Uncompressed = true
+		return nil
+	default:
+		return ErrUnknownCompressionMethod
+	}
 }

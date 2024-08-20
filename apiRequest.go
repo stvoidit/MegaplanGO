@@ -2,14 +2,24 @@ package megaplan
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"mime/multipart"
 	"net/http"
+	"net/url"
 	"time"
 )
 
-// ISO8601 - формат даты для api
-const ISO8601 = `2006-01-02T15:04:05-07:00`
+const (
+	headerContentType    = "Content-Type"
+	valueApplicationJSON = "application/json"
+)
+
+const (
+	typeDateOnly     = "DateOnly"
+	typeDateTime     = "DateTime"
+	typeDateInterval = "DateInterval"
+)
 
 // BuildQueryParams - сборка объекта для запроса
 func BuildQueryParams(opts ...QueryBuildingFunc) (qp QueryParams) {
@@ -28,9 +38,8 @@ type QueryBuildingFunc func(QueryParams)
 func CreateEnity(contentType string, value any) (qp QueryParams) {
 	qp = make(QueryParams, 2)
 	qp["contentType"] = contentType
-
 	switch contentType {
-	case "DateOnly":
+	case typeDateOnly:
 		t, isTime := value.(time.Time)
 		if !isTime {
 			return nil
@@ -38,13 +47,13 @@ func CreateEnity(contentType string, value any) (qp QueryParams) {
 		qp["year"] = t.Year()
 		qp["month"] = t.Month() - 1
 		qp["day"] = t.Day()
-	case "DateTime":
+	case typeDateTime:
 		t, isTime := value.(time.Time)
 		if !isTime {
 			return nil
 		}
 		qp["value"] = t.Format(ISO8601)
-	case "DateInterval":
+	case typeDateInterval:
 		// если передается не время, то должно указываться кол-во секунд (актуальная документация мегаплана пишет что миллисекунды - это ошибка)
 		switch v := value.(type) {
 		case time.Time:
@@ -106,6 +115,72 @@ func (c *ClientV3) UploadFile(filename string, fileReader io.Reader) (*http.Resp
 		return nil, err
 	}
 	request.URL.Path = "/api/file"
-	request.Header.Set("Content-Type", mw.FormDataContentType())
+	request.Header.Set(headerContentType, mw.FormDataContentType())
+	return c.Do(request)
+}
+
+// Do - http.Do + установка обязательных заголовков + декомпрессия ответа, если ответ сжат
+func (c *ClientV3) Do(req *http.Request) (*http.Response, error) {
+	for h := range c.defaultHeaders.Clone() {
+		req.Header.Set(h, c.defaultHeaders.Get(h))
+	}
+	if _, ok := req.Header[headerContentType]; !ok {
+		req.Header.Set(headerContentType, valueApplicationJSON)
+	}
+	res, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	// slog.Debug("response",
+	// 	slog.String("proto", res.Proto),
+	// 	slog.Int("status", res.StatusCode),
+	// 	slog.String("connection", res.Header.Get("connection")),
+	// )
+	if err := unzipResponse(res); err != nil {
+		return nil, err
+	}
+	return res, nil
+}
+
+func (c ClientV3) makeRequestURL(endpoint string, search QueryParams) string {
+	var args string // параметры строки запроса
+	if search != nil {
+		args = search.QueryEscape()
+	}
+	return (&url.URL{
+		Scheme:   "https",
+		Host:     c.domain,
+		Path:     endpoint,
+		RawQuery: args,
+	}).String()
+}
+
+// DoRequestAPI - т.к. в v3 параметры запроса для GET (json маршализируется и будет иметь вид: "*?{params}=")
+func (c ClientV3) DoRequestAPI(method, endpoint string, search QueryParams, body io.Reader) (*http.Response, error) {
+	request, err := http.NewRequest(
+		method,
+		c.makeRequestURL(endpoint, search),
+		body)
+	if err != nil {
+		return nil, err
+	}
+	// slog.Debug("DoRequestAPI.NewRequest",
+	// 	slog.String("method", method),
+	// 	slog.String("endpoint", request.URL.String()))
+	return c.Do(request)
+}
+
+// DoRequestAPI - т.к. в v3 параметры запроса для GET (json маршализируется и будет иметь вид: "*?{params}=")
+func (c ClientV3) DoCtxRequestAPI(ctx context.Context, method, endpoint string, search QueryParams, body io.Reader) (*http.Response, error) {
+	request, err := http.NewRequestWithContext(ctx,
+		method,
+		c.makeRequestURL(endpoint, search),
+		body)
+	if err != nil {
+		return nil, err
+	}
+	// slog.Debug("DoCtxRequestAPI.NewRequestWithContext",
+	// 	slog.String("method", method),
+	// 	slog.String("endpoint", request.URL.String()))
 	return c.Do(request)
 }
