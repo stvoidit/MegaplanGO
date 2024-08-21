@@ -30,7 +30,7 @@ var (
 
 // NewClient - обертка над http.Client для удобной работы с API v3
 func NewClient(domain, token string, opts ...ClientOption) (c *ClientV3) {
-	if strings.HasPrefix("http", domain) {
+	if strings.HasPrefix(domain, "http") {
 		_URL, _ := url.Parse(domain)
 		domain = _URL.Host
 	}
